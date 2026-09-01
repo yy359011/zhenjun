@@ -282,8 +282,8 @@ interface CascaderOption {
 
 const cascaderProps = {
   multiple: true,
-  checkStrictly: true,  // 父子节点独立，勾选父节点不会联动子节点
-  emitPath: true,        // 值为完整路径数组
+  checkStrictly: false, // 勾选父节点自动全选子节点
+  emitPath: true,       // 值为完整路径数组
   checkOnClickNode: true
 }
 
