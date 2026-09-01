@@ -94,26 +94,28 @@
                     />
                   </el-select>
                 </div>
-                <div class="form-item">
-                  <label class="form-label required">选择数据</label>
-                  <el-cascader
-                    v-model="selectForm.specimenValues"
-                    :options="specimenCascaderOptions"
-                    :props="cascaderProps"
-                    placeholder="请选择标本"
-                    class="form-select cascader-select"
-                    collapse-tags
-                    collapse-tags-tooltip
-                    clearable
-                    filterable
-                  />
-                  <el-tag
-                    v-if="specimenLeafIds.length > 0"
-                    size="small"
-                    type="primary"
-                    effect="plain"
-                    class="selected-count-tag"
-                  >已选 {{ specimenLeafIds.length }} 项</el-tag>
+                <div class="form-item select-data-item">
+                  <div class="select-data-row">
+                    <label class="form-label required">选择数据</label>
+                    <el-cascader
+                      v-model="selectForm.specimenValues"
+                      :options="specimenCascaderOptions"
+                      :props="cascaderProps"
+                      placeholder="请选择标本"
+                      class="form-select cascader-select"
+                      collapse-tags
+                      collapse-tags-tooltip
+                      clearable
+                      filterable
+                    />
+                    <el-tag
+                      v-if="specimenLeafIds.length > 0"
+                      size="small"
+                      type="primary"
+                      effect="plain"
+                      class="selected-count-tag"
+                    >已选 {{ specimenLeafIds.length }} 项</el-tag>
+                  </div>
                   <div class="group-select-row">
                     <el-checkbox
                       v-for="g in specimenGroups"
@@ -808,11 +810,24 @@ const handleJumpPage = (page: number) => {
     flex-shrink: 0;
   }
 
+  .select-data-item {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0;
+  }
+
+  .select-data-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
   .group-select-row {
     display: flex;
     flex-wrap: wrap;
     gap: 16px;
     margin-top: 6px;
+    margin-left: 68px;
   }
 
   .group-checkbox {
