@@ -94,40 +94,26 @@
                     />
                   </el-select>
                 </div>
-                <div class="form-item select-data-item">
-                  <div class="select-data-row">
-                    <label class="form-label required">选择数据</label>
-                    <el-cascader
-                      v-model="selectForm.specimenValues"
-                      :options="specimenCascaderOptions"
-                      :props="cascaderProps"
-                      placeholder="请选择标本"
-                      class="form-select cascader-select"
-                      collapse-tags
-                      collapse-tags-tooltip
-                      clearable
-                      filterable
-                    />
-                    <el-tag
-                      v-if="specimenLeafIds.length > 0"
-                      size="small"
-                      type="primary"
-                      effect="plain"
-                      class="selected-count-tag"
-                    >已选 {{ specimenLeafIds.length }} 项</el-tag>
-                  </div>
-                  <div class="group-select-row">
-                    <el-checkbox
-                      v-for="g in specimenGroups"
-                      :key="g.type"
-                      :model-value="isGroupAllSelected(g.type)"
-                      :indeterminate="isGroupIndeterminate(g.type)"
-                      @change="toggleGroupAll(g.type)"
-                      class="group-checkbox"
-                    >
-                      {{ g.label }}
-                    </el-checkbox>
-                  </div>
+                <div class="form-item">
+                  <label class="form-label required">选择数据</label>
+                  <el-cascader
+                    v-model="selectForm.specimenValues"
+                    :options="specimenCascaderOptions"
+                    :props="cascaderProps"
+                    placeholder="请选择标本"
+                    class="form-select cascader-select"
+                    collapse-tags
+                    collapse-tags-tooltip
+                    clearable
+                    filterable
+                  />
+                  <el-tag
+                    v-if="specimenLeafIds.length > 0"
+                    size="small"
+                    type="primary"
+                    effect="plain"
+                    class="selected-count-tag"
+                  >已选 {{ specimenLeafIds.length }} 项</el-tag>
                 </div>
               </div>
               <!-- 右侧：分类目录 + 标题，右对齐 -->
@@ -299,51 +285,6 @@ const cascaderProps = {
   checkStrictly: true,  // 父子节点独立，勾选父节点不会联动子节点
   emitPath: true,        // 值为完整路径数组
   checkOnClickNode: true
-}
-
-// 分组配置（对应级联的四个一级节点）
-const specimenGroups: { type: SpecimenItem['type']; label: string }[] = [
-  { type: 'fungi', label: '真菌标本' },
-  { type: 'lichen', label: '地衣标本' },
-  { type: 'strain', label: '菌种数据' },
-  { type: 'amplicon', label: '扩增子数据' }
-]
-
-// 分组全选/取消
-function toggleGroupAll(type: SpecimenItem['type']) {
-  const groupItems = specimenList.value.filter(s => s.type === type)
-  const groupPaths: (string | number)[][] = groupItems.map(s => [type, s.id])
-  const isAllSelected = groupPaths.every(p =>
-    selectForm.specimenValues.some(v => v[0] === type && v[1] === p[1])
-  )
-  if (isAllSelected) {
-    // 取消这个分组下所有叶子 + 父节点
-    selectForm.specimenValues = selectForm.specimenValues.filter(
-      v => !(v[0] === type && (v.length === 1 || (v.length === 2 && groupItems.some(s => s.id === v[1]))))
-    )
-  } else {
-    // 追加这个分组的所有子节点路径
-    selectForm.specimenValues.push(...groupPaths)
-  }
-}
-
-// 判断某分组是否全选
-function isGroupAllSelected(type: SpecimenItem['type']) {
-  const groupIds = specimenList.value.filter(s => s.type === type).map(s => s.id)
-  if (groupIds.length === 0) return false
-  return groupIds.every(id =>
-    selectForm.specimenValues.some(v => v.length === 2 && v[0] === type && v[1] === id)
-  )
-}
-
-// 判断某分组是否半选
-function isGroupIndeterminate(type: SpecimenItem['type']) {
-  const groupIds = specimenList.value.filter(s => s.type === type).map(s => s.id)
-  if (groupIds.length === 0) return false
-  const selectedCount = groupIds.filter(id =>
-    selectForm.specimenValues.some(v => v.length === 2 && v[0] === type && v[1] === id)
-  ).length
-  return selectedCount > 0 && selectedCount < groupIds.length
 }
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -808,30 +749,6 @@ const handleJumpPage = (page: number) => {
   .selected-count-tag {
     margin-left: 8px;
     flex-shrink: 0;
-  }
-
-  .select-data-item {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0;
-  }
-
-  .select-data-row {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-  }
-
-  .group-select-row {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 16px;
-    margin-top: 6px;
-    margin-left: 68px;
-  }
-
-  .group-checkbox {
-    margin-right: 0;
   }
 
   .select-all-row {
