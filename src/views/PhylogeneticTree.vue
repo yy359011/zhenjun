@@ -419,6 +419,10 @@
                   <el-button size="small" circle class="tool-mini-btn" @click="adjustZoom(0.1)">
                     <el-icon><Plus /></el-icon>
                   </el-button>
+                  <el-button size="small" class="tool-reroot-btn" :type="rerootMode ? 'warning' : 'default'" @click="rerootMode ? cancelReroot() : enterRerootMode">
+                    <el-icon><Aim /></el-icon>
+                    {{ rerootMode ? '取消 Reroot' : 'Reroot' }}
+                  </el-button>
                   <el-button size="small" class="tool-reset-btn" @click="resetTreeView">重置</el-button>
                   <el-dropdown @command="handleDownload">
                     <el-button size="small" type="primary" class="tool-download-btn">
@@ -459,9 +463,13 @@
                       v-for="(edge, i) in treeEdges"
                       :key="'e-' + i"
                       :d="edge.path"
-                      :stroke="edge.color || '#b0b4bf'"
-                      stroke-width="1.4"
+                      :stroke="rerootMode && rerootHoverId === edge.childNodeId ? '#2E5CF6' : edge.color || '#b0b4bf'"
+                      :stroke-width="rerootMode && rerootHoverId === edge.childNodeId ? 3 : rerootMode ? 2 : 1.4"
+                      :style="rerootMode ? 'cursor: pointer;' : ''"
                       fill="none"
+                      @mouseenter="rerootMode && (rerootHoverId = edge.childNodeId ?? null)"
+                      @mouseleave="rerootMode && (rerootHoverId = null)"
+                      @click="rerootMode && rerootAtEdge(edge.parentNodeId!, edge.childNodeId!)"
                     />
                   </g>
 
@@ -592,7 +600,8 @@ import {
   Plus,
   Search,
   ArrowDown,
-  CopyDocument
+  CopyDocument,
+  Aim
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
@@ -876,6 +885,8 @@ interface TreeNode {
   _lineColor?: string
   _aMin?: number
   _aMax?: number
+  // 内部唯一 ID（用于 reroot 边匹配）
+  _nodeId?: number
 }
 
 interface TreeEdge {
@@ -885,6 +896,9 @@ interface TreeEdge {
   y2: number
   path: string
   color?: string
+  // 用于 reroot 定位
+  parentNodeId?: number
+  childNodeId?: number
 }
 
 interface TreeLeaf {
@@ -936,11 +950,14 @@ const treeOpts = reactive({
 })
 
 const treeRoot = ref<TreeNode | null>(null)
+const originalRoot = ref<TreeNode | null>(null) // 原始未 reroot 的树
 const treeLeaves = ref<TreeLeaf[]>([])
 const treeEdges = ref<TreeEdge[]>([])
 const treeBootstraps = ref<TreeBootstrap[]>([])
 const treeRadialSectors = ref<TreeSector[]>([])
 const treeSearch = ref('')
+const rerootMode = ref(false)     // 是否处于 reroot 模式（点击边执行 reroot）
+const rerootHoverId = ref<number | null>(null) // 鼠标悬停的 edge.childNodeId
 const highlightRect = ref<HighlightRect | null>(null)
 
 const treeViewBox = ref('0 0 1200 600')
@@ -999,7 +1016,45 @@ function parseNewick(s: string): TreeNode {
   }
 
   const root = parseNode()
+  assignIds(root)
   return root
+}
+
+/* ---- 给每个节点分配唯一 ID ---- */
+let _nextNodeId = 0
+function assignIds(node: TreeNode) {
+  node._nodeId = _nextNodeId++
+  if (node.children) node.children.forEach(assignIds)
+}
+
+/* ---- 深克隆纯拓扑树（不带布局字段）---- */
+function cloneTree(node: TreeNode): TreeNode {
+  const out: TreeNode = {
+    name: node.name,
+    length: node.length,
+    bootstrap: node.bootstrap,
+    isLeaf: node.isLeaf,
+    _nodeId: node._nodeId
+  }
+  if (node.children) {
+    out.children = node.children.map(c => cloneTree(c))
+    out.isLeaf = false
+  }
+  return out
+}
+
+/* ---- 序列化为 Newick ---- */
+function toNewick(node: TreeNode): string {
+  let s = ''
+  if (node.children && node.children.length > 0) {
+    s += '(' + node.children.map(toNewick).join(',') + ')'
+  }
+  if (node.name) s += node.name
+  if (node.bootstrap != null && node.children && node.children.length > 0) {
+    s += '[' + node.bootstrap + ']'
+  }
+  if (node.length != null) s += ':' + node.length
+  return s
 }
 
 /* ---- 后序遍历计算子树高度 ---- */
@@ -1091,7 +1146,7 @@ function layoutRectangular() {
     for (const c of node.children) {
       const parentX = node.x!
       const path = `M ${c!.x} ${c!.y} L ${parentX} ${c!.y} L ${parentX} ${node.y}`
-      edges.push({ x1: c!.x!, y1: c!.y!, x2: node.x!, y2: node.y!, path })
+      edges.push({ x1: c!.x!, y1: c!.y!, x2: node.x!, y2: node.y!, path, parentNodeId: node._nodeId, childNodeId: c!._nodeId })
     }
     if (node.bootstrap != null && node.children.length > 0) {
       bootstraps.push({
@@ -1293,7 +1348,9 @@ function layoutPolar() {
         x1: node.x!, y1: node.y!,
         x2: cx, y2: cy,
         path: '',
-        color: c._color || myColor
+        color: c._color || myColor,
+        parentNodeId: node._nodeId,
+        childNodeId: c._nodeId
       })
       render(c)
     }
@@ -1549,7 +1606,9 @@ function layoutRadial() {
       edges.push({
         x1: node.x!, y1: node.y!, x2: cx, y2: cy,
         path,
-        color: c._lineColor || lineColor
+        color: c._lineColor || lineColor,
+        parentNodeId: node._nodeId,
+        childNodeId: c._nodeId
       })
       render(c)
     }
@@ -1597,7 +1656,9 @@ function generateMockTree(row: TaskItem) {
     `((Neoboletus_infuscatus_FHMU3372:0.0070,Neoboletus_rubriporus_HKAS_83026:0.0057)[82]:0.01,` +
     `Neoboletus_sp_HKAS_50351:0.0143)[66]:0.01` +
     `)[49]:0.0);`
-  treeRoot.value = parseNewick(newick)
+  const parsed = parseNewick(newick)
+  originalRoot.value = cloneTree(parsed)
+  treeRoot.value = parsed
 }
 
 /* ---- 搜索 ---- */
@@ -1683,14 +1744,123 @@ function resetTreeView() {
   treeOpts.equalBranch = true
   treeOpts.zoom = 1
   highlightRect.value = null
+  // 恢复到原始树（撤销 reroot）
+  if (originalRoot.value) {
+    treeRoot.value = cloneTree(originalRoot.value)
+  }
+  rerootMode.value = false
+  rerootHoverId.value = null
   layoutTree()
 }
 function closeTreeDialog() {
   treeDialogVisible.value = false
 }
 
+/* ---- Reroot：沿一条边中点插入新根 ---- */
+function rerootAtEdge(parentId: number, childId: number) {
+  if (!originalRoot.value) return
+
+  // 1. 从 originalRoot 克隆一份（保证每次 reroot 都从原始拓扑开始）
+  const clone = cloneTree(originalRoot.value)
+
+  // 2. DFS 找到从 root 到 child 的路径（包含 root...P...C）
+  const path: TreeNode[] = []
+  function findPath(node: TreeNode): boolean {
+    path.push(node)
+    if (node._nodeId === childId) return true
+    if (node.children) {
+      for (const c of node.children) {
+        if (findPath(c)) return true
+      }
+    }
+    path.pop()
+    return false
+  }
+  findPath(clone)
+  if (path.length < 2) {
+    ElMessage.warning('无法定位到选中的边')
+    return
+  }
+  // path = [..., P, C]，P 是 path[path.length-2]，C 是 path[path.length-1]
+  const P = path[path.length - 2]
+  const C = path[path.length - 1]
+
+  // 3. 原边长度 L，切成两半
+  const L = C.length || 0.01
+  const half = L / 2
+
+  // 4. 从 P.children 中摘掉 C
+  if (P.children) {
+    P.children = P.children.filter(c => c._nodeId !== childId)
+  }
+  // C 现在变成 orphan，挂到新根下，length = half
+  C.length = half
+
+  // 5. 翻转 P → root 的路径（不含 C）
+  const flipPath = path.slice(0, -1) // [..., P]
+  let prev: TreeNode | null = null
+  for (let i = flipPath.length - 1; i >= 0; i--) {
+    const node = flipPath[i]
+    if (prev) {
+      // prev 已经被翻转成 node 的子节点了，所以 node.children 中应该已经有 prev
+      // 但如果翻转时是从 pathToRoot 方向，第一次（prev=null）是 P 本身
+      // 第二次 prev 是 P，node 是 P 的 parent → 需要：
+      //   node.children 中移除 P（因为翻转后 P 在另一侧）
+      //   prev.children 中加入 node
+      if (node.children) {
+        node.children = node.children.filter(c => c._nodeId !== prev!._nodeId)
+      }
+      if (!prev.children) prev.children = []
+      prev.children.push(node)
+      prev.isLeaf = false
+    }
+    prev = node
+  }
+  // 翻转完成后，prev 指向 flipPath 的第一个节点（原 root）
+  // P 在 flipPath 的最后，现在是 prev 链条的顶端，length 需要设为 half
+  P.length = half
+
+  // 6. 创建新根 R
+  const R: TreeNode = {
+    children: [C, P],
+    isLeaf: false
+  }
+
+  // 7. 重新分配 ID
+  _nextNodeId = 0
+  assignIds(R)
+
+  // 8. 重新布局
+  treeRoot.value = R
+  rerootMode.value = false
+  rerootHoverId.value = null
+  ElMessage.success('已在选中分支中点插入新根')
+  layoutTree()
+}
+
+function cancelReroot() {
+  rerootMode.value = false
+  rerootHoverId.value = null
+}
+function enterRerootMode() {
+  if (!originalRoot.value) {
+    ElMessage.warning('当前没有可 reroot 的树')
+    return
+  }
+  rerootMode.value = true
+  ElMessage.info('进入 Reroot 模式，点击任意分支执行重根')
+}
+
 /* ---- 下载 ---- */
 function handleDownload(cmd: string) {
+  if (cmd === 'newick') {
+    if (!treeRoot.value) return
+    const newickStr = toNewick(treeRoot.value) + ';'
+    const blob = new Blob([newickStr], { type: 'text/plain;charset=utf-8' })
+    triggerDownload(blob, `${currentTreeTask.value?.taskName || 'tree'}.nwk`)
+    ElMessage.success('Newick 格式已下载（当前 reroot 状态）')
+    return
+  }
   if (!treeSvgRef.value) return
   if (cmd === 'svg') {
     const serializer = new XMLSerializer()
@@ -1700,9 +1870,6 @@ function handleDownload(cmd: string) {
   } else if (cmd === 'png') {
     ElMessage.info('PNG 导出需要浏览器支持，已下载 SVG 版本')
     handleDownload('svg')
-  } else if (cmd === 'newick') {
-    // 简单 Newick 输出
-    ElMessage.success('Newick 格式下载（模拟）')
   }
 }
 function triggerDownload(blob: Blob, filename: string) {
