@@ -79,9 +79,12 @@
                 <div class="form-item">
                   <label class="form-label required">序列标记</label>
                   <el-select
-                    v-model="selectForm.marker"
-                    placeholder="请选择序列标记"
+                    v-model="selectForm.markers"
+                    placeholder="请选择序列标记（可多选）"
                     class="form-select marker-select"
+                    multiple
+                    collapse-tags
+                    collapse-tags-tooltip
                   >
                     <el-option
                       v-for="item in markerList"
@@ -93,43 +96,36 @@
                 </div>
                 <div class="form-item">
                   <label class="form-label required">选择数据</label>
-                  <el-select
-                    v-model="selectForm.specimenIds"
-                    placeholder="请选择标本采集编号（可多选）"
-                    class="form-select"
-                    filterable
-                    multiple
+                  <el-cascader
+                    v-model="selectForm.specimenValues"
+                    :options="specimenCascaderOptions"
+                    :props="cascaderProps"
+                    placeholder="请选择标本"
+                    class="form-select cascader-select"
                     collapse-tags
                     collapse-tags-tooltip
-                    :multiple-limit="0"
-                  >
-                    <template #header>
-                      <div class="select-all-row" @click="toggleSelectAll">
-                        <el-checkbox
-                          v-model="isAllSpecimenSelected"
-                          :indeterminate="specimenIndeterminate"
-                          @change="toggleSelectAll"
-                        />
-                        <span>{{ isAllSpecimenSelected ? '取消全选' : '全选' }}</span>
-                      </div>
-                    </template>
-                    <el-option
-                      v-for="item in specimenList"
-                      :key="item.id"
-                      :label="item.collectionNo"
-                      :value="item.id"
-                    >
-                      <span>{{ item.collectionNo }}</span>
-                      <el-tag size="small" type="info" effect="plain" class="db-tag">{{ item.speciesName }}</el-tag>
-                    </el-option>
-                  </el-select>
+                    clearable
+                    filterable
+                  />
                   <el-tag
-                    v-if="selectForm.specimenIds.length > 0"
+                    v-if="specimenLeafIds.length > 0"
                     size="small"
                     type="primary"
                     effect="plain"
                     class="selected-count-tag"
-                  >已选 {{ selectForm.specimenIds.length }} 项</el-tag>
+                  >已选 {{ specimenLeafIds.length }} 项</el-tag>
+                  <div class="group-select-row">
+                    <el-checkbox
+                      v-for="g in specimenGroups"
+                      :key="g.type"
+                      :model-value="isGroupAllSelected(g.type)"
+                      :indeterminate="isGroupIndeterminate(g.type)"
+                      @change="toggleGroupAll(g.type)"
+                      class="group-checkbox"
+                    >
+                      {{ g.label }}
+                    </el-checkbox>
+                  </div>
                 </div>
               </div>
               <!-- 右侧：分类目录 + 标题，右对齐 -->
@@ -287,6 +283,65 @@ interface SpecimenItem {
   id: number
   collectionNo: string
   speciesName: string
+  type: 'fungi' | 'lichen' | 'strain' | 'amplicon'
+}
+
+interface CascaderOption {
+  value: string | number
+  label: string
+  children?: CascaderOption[]
+}
+
+const cascaderProps = {
+  multiple: true,
+  checkStrictly: true,  // 父子节点独立，勾选父节点不会联动子节点
+  emitPath: true,        // 值为完整路径数组
+  checkOnClickNode: true
+}
+
+// 分组配置（对应级联的四个一级节点）
+const specimenGroups: { type: SpecimenItem['type']; label: string }[] = [
+  { type: 'fungi', label: '真菌标本' },
+  { type: 'lichen', label: '地衣标本' },
+  { type: 'strain', label: '菌种数据' },
+  { type: 'amplicon', label: '扩增子数据' }
+]
+
+// 分组全选/取消
+function toggleGroupAll(type: SpecimenItem['type']) {
+  const groupItems = specimenList.value.filter(s => s.type === type)
+  const groupPaths: (string | number)[][] = groupItems.map(s => [type, s.id])
+  const isAllSelected = groupPaths.every(p =>
+    selectForm.specimenValues.some(v => v[0] === type && v[1] === p[1])
+  )
+  if (isAllSelected) {
+    // 取消这个分组下所有叶子 + 父节点
+    selectForm.specimenValues = selectForm.specimenValues.filter(
+      v => !(v[0] === type && (v.length === 1 || (v.length === 2 && groupItems.some(s => s.id === v[1]))))
+    )
+  } else {
+    // 追加这个分组的所有子节点路径
+    selectForm.specimenValues.push(...groupPaths)
+  }
+}
+
+// 判断某分组是否全选
+function isGroupAllSelected(type: SpecimenItem['type']) {
+  const groupIds = specimenList.value.filter(s => s.type === type).map(s => s.id)
+  if (groupIds.length === 0) return false
+  return groupIds.every(id =>
+    selectForm.specimenValues.some(v => v.length === 2 && v[0] === type && v[1] === id)
+  )
+}
+
+// 判断某分组是否半选
+function isGroupIndeterminate(type: SpecimenItem['type']) {
+  const groupIds = specimenList.value.filter(s => s.type === type).map(s => s.id)
+  if (groupIds.length === 0) return false
+  const selectedCount = groupIds.filter(id =>
+    selectForm.specimenValues.some(v => v.length === 2 && v[0] === type && v[1] === id)
+  ).length
+  return selectedCount > 0 && selectedCount < groupIds.length
 }
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -307,10 +362,15 @@ const uploadForm = reactive({
 })
 
 const selectForm = reactive({
-  marker: '',
-  specimenIds: [] as number[],
+  markers: [] as string[],
+  specimenValues: [] as (string | number)[][], // 级联选择完整路径
   category: '',
   title: ''
+})
+
+// 提取选中的叶子节点采集编号 ID 列表
+const specimenLeafIds = computed(() => {
+  return selectForm.specimenValues.map(path => path[path.length - 1] as number)
 })
 
 interface MarkerItem {
@@ -328,17 +388,49 @@ const markerList = ref<MarkerItem[]>([
 ])
 
 const specimenList = ref<SpecimenItem[]>([
-  { id: 1, collectionNo: 'HMAS-L 012345', speciesName: 'Amanita muscaria' },
-  { id: 2, collectionNo: 'HMAS-L 012346', speciesName: 'Ganoderma lucidum' },
-  { id: 3, collectionNo: 'HMAS-L 012347', speciesName: 'Cordyceps sinensis' },
-  { id: 4, collectionNo: 'HMAS-L 012348', speciesName: 'Lentinula edodes' },
-  { id: 5, collectionNo: 'HMAS-L 012349', speciesName: 'Pleurotus ostreatus' },
-  { id: 6, collectionNo: 'HMAS-L 012350', speciesName: 'Trametes versicolor' },
-  { id: 7, collectionNo: 'HMAS-L 012351', speciesName: 'Hericium erinaceus' },
-  { id: 8, collectionNo: 'HMAS-L 012352', speciesName: 'Morchella esculenta' },
-  { id: 9, collectionNo: 'HMAS-L 012353', speciesName: 'Boletus edulis' },
-  { id: 10, collectionNo: 'HMAS-L 012354', speciesName: 'Cantharellus cibarius' }
+  // 真菌标本
+  { id: 1, collectionNo: 'HMAS-L 012345', speciesName: 'Amanita muscaria', type: 'fungi' },
+  { id: 2, collectionNo: 'HMAS-L 012346', speciesName: 'Ganoderma lucidum', type: 'fungi' },
+  { id: 3, collectionNo: 'HMAS-L 012347', speciesName: 'Cordyceps sinensis', type: 'fungi' },
+  { id: 4, collectionNo: 'HMAS-L 012348', speciesName: 'Lentinula edodes', type: 'fungi' },
+  { id: 5, collectionNo: 'HMAS-L 012349', speciesName: 'Pleurotus ostreatus', type: 'fungi' },
+  { id: 6, collectionNo: 'HMAS-L 012350', speciesName: 'Trametes versicolor', type: 'fungi' },
+  // 地衣标本
+  { id: 7, collectionNo: 'HMAS-L 022351', speciesName: 'Usnea barbata', type: 'lichen' },
+  { id: 8, collectionNo: 'HMAS-L 022352', speciesName: 'Parmelia sulcata', type: 'lichen' },
+  { id: 9, collectionNo: 'HMAS-L 022353', speciesName: 'Cladonia rangiferina', type: 'lichen' },
+  { id: 10, collectionNo: 'HMAS-L 022354', speciesName: 'Lobaria pulmonaria', type: 'lichen' },
+  // 菌种数据
+  { id: 11, collectionNo: 'CGMCC 3.1528', speciesName: 'Hericium erinaceus', type: 'strain' },
+  { id: 12, collectionNo: 'CGMCC 5.866', speciesName: 'Morchella esculenta', type: 'strain' },
+  { id: 13, collectionNo: 'CGMCC 12.287', speciesName: 'Boletus edulis', type: 'strain' },
+  { id: 14, collectionNo: 'CGMCC 13.200', speciesName: 'Cantharellus cibarius', type: 'strain' },
+  // 扩增子数据
+  { id: 15, collectionNo: 'AMPL-2024-001', speciesName: '土壤真菌群落', type: 'amplicon' },
+  { id: 16, collectionNo: 'AMPL-2024-002', speciesName: '叶面真菌群落', type: 'amplicon' },
+  { id: 17, collectionNo: 'AMPL-2024-003', speciesName: '肠道真菌群落', type: 'amplicon' }
 ])
+
+// 级联选择器 options
+const specimenCascaderOptions = computed<CascaderOption[]>(() => {
+  const typeMap: Record<SpecimenItem['type'], { label: string; children: CascaderOption[] }> = {
+    fungi:   { label: '真菌标本', children: [] },
+    lichen:  { label: '地衣标本', children: [] },
+    strain:  { label: '菌种数据', children: [] },
+    amplicon:{ label: '扩增子数据', children: [] }
+  }
+  specimenList.value.forEach(item => {
+    typeMap[item.type].children.push({
+      value: item.id,
+      label: `${item.collectionNo}（${item.speciesName}）`
+    })
+  })
+  return (Object.keys(typeMap) as SpecimenItem['type'][]).map(key => ({
+    value: key,
+    label: typeMap[key].label,
+    children: typeMap[key].children
+  }))
+})
 
 const tableData = ref<DatabaseItem[]>([
   {
@@ -440,11 +532,11 @@ const handleUpload = () => {
 }
 
 const handleBuildFromData = () => {
-  if (!selectForm.marker) {
-    ElMessage.warning('请选择序列标记')
+  if (selectForm.markers.length === 0) {
+    ElMessage.warning('请至少选择一个序列标记')
     return
   }
-  if (selectForm.specimenIds.length === 0) {
+  if (specimenLeafIds.value.length === 0) {
     ElMessage.warning('请至少选择一条数据')
     return
   }
@@ -452,33 +544,19 @@ const handleBuildFromData = () => {
     ElMessage.warning('请填写分类目录')
     return
   }
-  const markerItem = markerList.value.find(m => m.value === selectForm.marker)
-  const count = selectForm.specimenIds.length
+  const markerLabels = selectForm.markers.map(v => markerList.value.find(m => m.value === v)?.label).join('、')
+  const count = specimenLeafIds.value.length
   building.value = true
   setTimeout(() => {
     building.value = false
-    ElMessage.success(`任务创建成功，标记：${markerItem?.label}，共 ${count} 条数据，分类：${selectForm.category}${selectForm.title ? '，标题：' + selectForm.title : ''}`)
-    selectForm.marker = ''
-    selectForm.specimenIds = []
+    ElMessage.success(`任务创建成功，标记：${markerLabels}，共 ${count} 条数据，分类：${selectForm.category}${selectForm.title ? '，标题：' + selectForm.title : ''}`)
+    selectForm.markers = []
+    selectForm.specimenValues = []
     selectForm.category = ''
     selectForm.title = ''
   }, 1500)
 }
 
-// 全选相关
-const isAllSpecimenSelected = computed(() => {
-  return specimenList.value.length > 0 && selectForm.specimenIds.length === specimenList.value.length
-})
-const specimenIndeterminate = computed(() => {
-  return selectForm.specimenIds.length > 0 && selectForm.specimenIds.length < specimenList.value.length
-})
-function toggleSelectAll() {
-  if (isAllSpecimenSelected.value) {
-    selectForm.specimenIds = []
-  } else {
-    selectForm.specimenIds = specimenList.value.map(s => s.id)
-  }
-}
 
 const refreshList = () => {
   loading.value = true
@@ -728,6 +806,17 @@ const handleJumpPage = (page: number) => {
   .selected-count-tag {
     margin-left: 8px;
     flex-shrink: 0;
+  }
+
+  .group-select-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 16px;
+    margin-top: 6px;
+  }
+
+  .group-checkbox {
+    margin-right: 0;
   }
 
   .select-all-row {
