@@ -1132,7 +1132,7 @@ function layoutPolar() {
   const root = treeRoot.value!
   computeSubtreeHeight(root)
 
-  const horzGap = treeOpts.horzGap
+  const horzGap = treeOpts.horzSpacing
   const margin = 100
 
   // ===== 颜色池（参考图的色系）=====
