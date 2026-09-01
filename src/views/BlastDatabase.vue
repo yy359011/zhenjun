@@ -334,6 +334,20 @@ const specimenLeafIds = computed(() => {
   return selectForm.specimenValues.map(path => path[path.length - 1] as number)
 })
 
+// 记录上次各分类的全选状态（用于检测"再次点击取消"场景）
+const lastToggleAllSelected: Record<SpecimenItem['type'], boolean> = {
+  fungi: false, lichen: false, strain: false, amplicon: false
+}
+
+// 检查某分类在给定 val 中是否全选
+function isGroupAllInValue(type: SpecimenItem['type'], val: (string | number)[][]) {
+  const groupIds = specimenList.value.filter(s => s.type === type).map(s => s.id)
+  if (groupIds.length === 0) return false
+  return groupIds.every(id =>
+    val.some(v => v.length === 2 && v[0] === type && v[1] === id)
+  )
+}
+
 // 处理虚拟全选节点的点击 → 批量切换真实采集编号
 function applyToggleNode(targetType: SpecimenItem['type']) {
   const groupItems = specimenList.value.filter(s => s.type === targetType)
@@ -351,6 +365,7 @@ function applyToggleNode(targetType: SpecimenItem['type']) {
     selectForm.specimenValues = selectForm.specimenValues.filter(
       v => !(v.length === 2 && v[0] === targetType && groupItems.some(s => s.id === v[1]))
     )
+    lastToggleAllSelected[targetType] = false
   } else {
     // 追加该分类全部真实子节点（去重）
     groupPaths.forEach(gp => {
@@ -358,12 +373,13 @@ function applyToggleNode(targetType: SpecimenItem['type']) {
         selectForm.specimenValues.push(gp)
       }
     })
+    lastToggleAllSelected[targetType] = true
   }
 }
 
 // cascader change 处理：拦截虚拟全选节点
 function handleCascaderChange(val: (string | number)[][]) {
-  // 找出虚拟节点
+  // 找出本次 change 中包含的虚拟节点（第一次点击全选会出现）
   const toggleTargets: SpecimenItem['type'][] = []
   for (const v of val) {
     if (v.length === 2 && v[0] && isToggleValue(v[1])) {
@@ -371,14 +387,22 @@ function handleCascaderChange(val: (string | number)[][]) {
       if (t && !toggleTargets.includes(t)) toggleTargets.push(t)
     }
   }
-  // 如果没有虚拟节点，直接返回（是正常勾选）
-  if (toggleTargets.length === 0) return
-  // 先把所有虚拟节点从 v-model 中移除
-  selectForm.specimenValues = val.filter(
-    v => !(v.length === 2 && v[0] && isToggleValue(v[1]))
-  )
-  // 逐个处理每个分类的全选/取消
-  toggleTargets.forEach(t => applyToggleNode(t))
+  if (toggleTargets.length > 0) {
+    // 第一次点击：val 里有虚拟节点 → 按正常全选/取消处理
+    selectForm.specimenValues = val.filter(
+      v => !(v.length === 2 && v[0] && isToggleValue(v[1]))
+    )
+    toggleTargets.forEach(t => applyToggleNode(t))
+  } else {
+    // 第二次点击（取消虚拟节点勾选）：val 里没有虚拟节点
+    // 遍历所有分类，如果某分类上次是全选态 && 当前 val 里仍是全选态
+    // 说明用户刚取消了虚拟节点，需要同步取消真实子节点
+    (Object.keys(lastToggleAllSelected) as SpecimenItem['type'][]).forEach(t => {
+      if (lastToggleAllSelected[t] && isGroupAllInValue(t, val)) {
+        applyToggleNode(t)
+      }
+    })
+  }
 }
 
 interface MarkerItem {
