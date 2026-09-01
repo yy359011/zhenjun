@@ -106,6 +106,7 @@
                     collapse-tags-tooltip
                     clearable
                     filterable
+                    @change="handleCascaderChange"
                   />
                   <el-tag
                     v-if="specimenLeafIds.length > 0"
@@ -244,7 +245,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   UploadFilled,
@@ -341,7 +342,7 @@ function applyToggleNode(targetType: SpecimenItem['type']) {
   const allSelected = groupPaths.every(p =>
     selectForm.specimenValues.some(v => v[0] === p[0] && v[1] === p[1])
   )
-  // 先移除虚拟节点路径（如果被加进来了）
+  // 先移除虚拟节点路径
   selectForm.specimenValues = selectForm.specimenValues.filter(
     v => !(v.length === 2 && v[0] === targetType && isToggleValue(v[1]))
   )
@@ -360,26 +361,25 @@ function applyToggleNode(targetType: SpecimenItem['type']) {
   }
 }
 
-// 监听变化，捕获虚拟节点的添加/移除
-watch(() => selectForm.specimenValues.slice(), (newVal) => {
-  let changed = false
-  const remaining: (string | number)[][] = []
-  for (const v of newVal) {
+// cascader change 处理：拦截虚拟全选节点
+function handleCascaderChange(val: (string | number)[][]) {
+  // 找出虚拟节点
+  const toggleTargets: SpecimenItem['type'][] = []
+  for (const v of val) {
     if (v.length === 2 && v[0] && isToggleValue(v[1])) {
       const t = typeFromToggle(v[1])
-      if (t) {
-        applyToggleNode(t)
-        changed = true
-        continue
-      }
+      if (t && !toggleTargets.includes(t)) toggleTargets.push(t)
     }
-    remaining.push(v)
   }
-  if (changed) {
-    // 清理后去重
-    selectForm.specimenValues = Array.from(new Set(remaining.map(p => p.join('|')))).map(s => s.split('|').map(x => isNaN(Number(x)) ? x : Number(x)))
-  }
-}, { deep: true })
+  // 如果没有虚拟节点，直接返回（是正常勾选）
+  if (toggleTargets.length === 0) return
+  // 先把所有虚拟节点从 v-model 中移除
+  selectForm.specimenValues = val.filter(
+    v => !(v.length === 2 && v[0] && isToggleValue(v[1]))
+  )
+  // 逐个处理每个分类的全选/取消
+  toggleTargets.forEach(t => applyToggleNode(t))
+}
 
 interface MarkerItem {
   label: string
