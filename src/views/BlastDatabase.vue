@@ -244,7 +244,7 @@
 </template>
 
 <script setup lang="ts">
-import { ref, reactive, computed } from 'vue'
+import { ref, reactive, computed, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   UploadFilled,
@@ -278,14 +278,79 @@ interface CascaderOption {
   value: string | number
   label: string
   children?: CascaderOption[]
+  disabled?: boolean
 }
 
 const cascaderProps = {
   multiple: true,
-  checkStrictly: false, // 勾选父节点自动全选子节点
-  emitPath: true,       // 值为完整路径数组
+  checkStrictly: true,  // 父子独立，不联动
+  emitPath: true,
   checkOnClickNode: true
 }
+
+// 虚拟全选节点的 value 前缀
+const TOGGLE_PREFIX = '__toggle__'
+function toggleValue(type: string) { return `${TOGGLE_PREFIX}${type}` }
+
+// 判断某个 value 是否为虚拟全选节点
+function isToggleValue(v: string | number) {
+  return typeof v === 'string' && v.startsWith(TOGGLE_PREFIX)
+}
+// 从虚拟节点 value 取出一级 type
+function typeFromToggle(v: string | number): SpecimenItem['type'] | null {
+  if (typeof v !== 'string') return null
+  const t = v.replace(TOGGLE_PREFIX, '')
+  if (['fungi', 'lichen', 'strain', 'amplicon'].includes(t)) return t as SpecimenItem['type']
+  return null
+}
+
+// 处理虚拟全选节点的点击 → 批量切换真实采集编号
+function applyToggleNode(targetType: SpecimenItem['type']) {
+  const groupItems = specimenList.value.filter(s => s.type === targetType)
+  const groupPaths = groupItems.map(s => [targetType, s.id] as (string | number)[])
+  // 查看当前是否已全选
+  const allSelected = groupPaths.every(p =>
+    selectForm.specimenValues.some(v => v[0] === p[0] && v[1] === p[1])
+  )
+  // 先移除虚拟节点路径（如果被加进来了）
+  selectForm.specimenValues = selectForm.specimenValues.filter(
+    v => !(v.length === 2 && v[0] === targetType && isToggleValue(v[1]))
+  )
+  if (allSelected) {
+    // 取消该分类全部真实子节点
+    selectForm.specimenValues = selectForm.specimenValues.filter(
+      v => !(v.length === 2 && v[0] === targetType && groupItems.some(s => s.id === v[1]))
+    )
+  } else {
+    // 追加该分类全部真实子节点（去重）
+    groupPaths.forEach(gp => {
+      if (!selectForm.specimenValues.some(v => v[0] === gp[0] && v[1] === gp[1])) {
+        selectForm.specimenValues.push(gp)
+      }
+    })
+  }
+}
+
+// 监听变化，捕获虚拟节点的添加/移除
+watch(() => selectForm.specimenValues.slice(), (newVal) => {
+  let changed = false
+  const remaining: (string | number)[][] = []
+  for (const v of newVal) {
+    if (v.length === 2 && v[0] && isToggleValue(v[1])) {
+      const t = typeFromToggle(v[1])
+      if (t) {
+        applyToggleNode(t)
+        changed = true
+        continue
+      }
+    }
+    remaining.push(v)
+  }
+  if (changed) {
+    // 清理后去重
+    selectForm.specimenValues = Array.from(new Set(remaining.map(p => p.join('|')))).map(s => s.split('|').map(x => isNaN(Number(x)) ? x : Number(x)))
+  }
+}, { deep: true })
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
 const selectedFiles = ref<File[]>([])
@@ -356,23 +421,33 @@ const specimenList = ref<SpecimenItem[]>([
 
 // 级联选择器 options
 const specimenCascaderOptions = computed<CascaderOption[]>(() => {
-  const typeMap: Record<SpecimenItem['type'], { label: string; children: CascaderOption[] }> = {
-    fungi:   { label: '真菌标本', children: [] },
-    lichen:  { label: '地衣标本', children: [] },
-    strain:  { label: '菌种数据', children: [] },
-    amplicon:{ label: '扩增子数据', children: [] }
+  const typeMeta: Record<SpecimenItem['type'], string> = {
+    fungi: '真菌标本',
+    lichen: '地衣标本',
+    strain: '菌种数据',
+    amplicon: '扩增子数据'
+  }
+  const grouped: Record<SpecimenItem['type'], CascaderOption[]> = {
+    fungi: [], lichen: [], strain: [], amplicon: []
   }
   specimenList.value.forEach(item => {
-    typeMap[item.type].children.push({
+    grouped[item.type].push({
       value: item.id,
       label: `${item.collectionNo}（${item.speciesName}）`
     })
   })
-  return (Object.keys(typeMap) as SpecimenItem['type'][]).map(key => ({
-    value: key,
-    label: typeMap[key].label,
-    children: typeMap[key].children
-  }))
+  return (Object.keys(typeMeta) as SpecimenItem['type'][]).map(key => {
+    // 在真实采集编号前插入虚拟全选节点
+    const toggleNode: CascaderOption = {
+      value: toggleValue(key),
+      label: '☑ 全选该分类'
+    }
+    return {
+      value: key,
+      label: typeMeta[key],
+      children: [toggleNode, ...grouped[key]]
+    }
+  })
 })
 
 const tableData = ref<DatabaseItem[]>([
