@@ -304,6 +304,35 @@ function typeFromToggle(v: string | number): SpecimenItem['type'] | null {
   return null
 }
 
+const fileInputRef = ref<HTMLInputElement | null>(null)
+const selectedFiles = ref<File[]>([])
+const uploading = ref(false)
+const building = ref(false)
+const loading = ref(false)
+const statusFilter = ref('')
+const currentPage = ref(1)
+const pageSize = ref(10)
+const jumpPage = ref(1)
+const selectedRows = ref<DatabaseItem[]>([])
+const activeTab = ref('upload')
+
+const uploadForm = reactive({
+  category: '',
+  title: ''
+})
+
+const selectForm = reactive({
+  markers: [] as string[],
+  specimenValues: [] as (string | number)[][], // 级联选择完整路径
+  category: '',
+  title: ''
+})
+
+// 提取选中的叶子节点采集编号 ID 列表
+const specimenLeafIds = computed(() => {
+  return selectForm.specimenValues.map(path => path[path.length - 1] as number)
+})
+
 // 处理虚拟全选节点的点击 → 批量切换真实采集编号
 function applyToggleNode(targetType: SpecimenItem['type']) {
   const groupItems = specimenList.value.filter(s => s.type === targetType)
@@ -351,35 +380,6 @@ watch(() => selectForm.specimenValues.slice(), (newVal) => {
     selectForm.specimenValues = Array.from(new Set(remaining.map(p => p.join('|')))).map(s => s.split('|').map(x => isNaN(Number(x)) ? x : Number(x)))
   }
 }, { deep: true })
-
-const fileInputRef = ref<HTMLInputElement | null>(null)
-const selectedFiles = ref<File[]>([])
-const uploading = ref(false)
-const building = ref(false)
-const loading = ref(false)
-const statusFilter = ref('')
-const currentPage = ref(1)
-const pageSize = ref(10)
-const jumpPage = ref(1)
-const selectedRows = ref<DatabaseItem[]>([])
-const activeTab = ref('upload')
-
-const uploadForm = reactive({
-  category: '',
-  title: ''
-})
-
-const selectForm = reactive({
-  markers: [] as string[],
-  specimenValues: [] as (string | number)[][], // 级联选择完整路径
-  category: '',
-  title: ''
-})
-
-// 提取选中的叶子节点采集编号 ID 列表
-const specimenLeafIds = computed(() => {
-  return selectForm.specimenValues.map(path => path[path.length - 1] as number)
-})
 
 interface MarkerItem {
   label: string
