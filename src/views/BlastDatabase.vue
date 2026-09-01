@@ -464,7 +464,7 @@ const specimenCascaderOptions = computed<CascaderOption[]>(() => {
     // 在真实采集编号前插入虚拟全选节点
     const toggleNode: CascaderOption = {
       value: toggleValue(key),
-      label: '☑ 全选该分类'
+      label: '全选该分类'
     }
     return {
       value: key,
