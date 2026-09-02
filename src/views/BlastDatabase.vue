@@ -273,6 +273,8 @@ interface SpecimenItem {
   collectionNo: string
   speciesName: string
   type: 'fungi' | 'lichen' | 'strain' | 'amplicon'
+  // 仅 amplicon 类型使用：二级子分类
+  subtype?: 'fungi' | 'bacteria' | 'archaea'
 }
 
 interface CascaderOption {
@@ -291,18 +293,58 @@ const cascaderProps = {
 
 // 虚拟全选节点的 value 前缀
 const TOGGLE_PREFIX = '__toggle__'
-function toggleValue(type: string) { return `${TOGGLE_PREFIX}${type}` }
+function toggleValue(key: string) { return `${TOGGLE_PREFIX}${key}` }
 
 // 判断某个 value 是否为虚拟全选节点
 function isToggleValue(v: string | number) {
   return typeof v === 'string' && v.startsWith(TOGGLE_PREFIX)
 }
-// 从虚拟节点 value 取出一级 type
-function typeFromToggle(v: string | number): SpecimenItem['type'] | null {
+// 从虚拟节点 value 取出 toggleKey（如 'fungi' 或 'amplicon__fungi'）
+function keyFromToggle(v: string | number): string | null {
   if (typeof v !== 'string') return null
-  const t = v.replace(TOGGLE_PREFIX, '')
-  if (['fungi', 'lichen', 'strain', 'amplicon'].includes(t)) return t as SpecimenItem['type']
-  return null
+  const k = v.replace(TOGGLE_PREFIX, '')
+  return k || null
+}
+// 判断路径是否指向某个 toggleKey 的虚拟节点
+function isTogglePath(path: (string | number)[], toggleKey: string): boolean {
+  if (toggleKey.startsWith('amplicon__')) {
+    // 3 级路径：['amplicon', subtype, '__toggle__amplicon__subtype']
+    const [type, sub, val] = path
+    return type === 'amplicon' && sub === toggleKey.split('__')[1] && val === toggleValue(toggleKey)
+  } else {
+    // 2 级路径：[type, '__toggle__type']
+    return path.length === 2 && path[0] === toggleKey && path[1] === toggleValue(toggleKey)
+  }
+}
+// 获取 toggleKey 下所有真实标本路径
+function realPathsForKey(toggleKey: string): (string | number)[][] {
+  if (toggleKey.startsWith('amplicon__')) {
+    const subtype = toggleKey.split('__')[1]
+    return specimenList.value
+      .filter(s => s.type === 'amplicon' && s.subtype === subtype)
+      .map(s => ['amplicon', subtype, s.id])
+  } else {
+    const type = toggleKey as SpecimenItem['type']
+    return specimenList.value
+      .filter(s => s.type === type)
+      .map(s => [type, s.id])
+  }
+}
+// 判断路径是否属于某个 toggleKey 下的真实标本
+function isRealPathOf(path: (string | number)[], toggleKey: string): boolean {
+  if (toggleKey.startsWith('amplicon__')) {
+    const subtype = toggleKey.split('__')[1]
+    if (path.length !== 3) return false
+    if (path[0] !== 'amplicon' || path[1] !== subtype) return false
+    const id = path[2]
+    return specimenList.value.some(s => s.type === 'amplicon' && s.subtype === subtype && s.id === id)
+  } else {
+    const type = toggleKey
+    if (path.length !== 2) return false
+    if (path[0] !== type) return false
+    const id = path[1]
+    return specimenList.value.some(s => s.type === type && s.id === id)
+  }
 }
 
 const fileInputRef = ref<HTMLInputElement | null>(null)
@@ -334,74 +376,82 @@ const specimenLeafIds = computed(() => {
   return selectForm.specimenValues.map(path => path[path.length - 1] as number)
 })
 
-// 记录上次各分类的全选状态（用于检测"再次点击取消"场景）
-const lastToggleAllSelected: Record<SpecimenItem['type'], boolean> = {
-  fungi: false, lichen: false, strain: false, amplicon: false
-}
+// 所有 toggleKey 列表（2 级类型 + amplicon 的 3 级子类型）
+const ALL_TOGGLE_KEYS = [
+  'fungi', 'lichen', 'strain',
+  'amplicon__fungi', 'amplicon__bacteria', 'amplicon__archaea'
+]
 
-// 检查某分类在给定 val 中是否全选
-function isGroupAllInValue(type: SpecimenItem['type'], val: (string | number)[][]) {
-  const groupIds = specimenList.value.filter(s => s.type === type).map(s => s.id)
-  if (groupIds.length === 0) return false
-  return groupIds.every(id =>
-    val.some(v => v.length === 2 && v[0] === type && v[1] === id)
-  )
+// 记录上次各 toggleKey 的全选状态
+const lastToggleAllSelected: Record<string, boolean> = Object.fromEntries(
+  ALL_TOGGLE_KEYS.map(k => [k, false])
+) as Record<string, boolean>
+
+// 检查某 toggleKey 在给定 val 中是否全选
+function isGroupAllInValue(toggleKey: string, val: (string | number)[][]) {
+  const paths = realPathsForKey(toggleKey)
+  if (paths.length === 0) return false
+  return paths.every(p => val.some(v => pathsEqual(v, p)))
+}
+function pathsEqual(a: (string | number)[], b: (string | number)[]): boolean {
+  if (a.length !== b.length) return false
+  return a.every((v, i) => v === b[i])
 }
 
 // 处理虚拟全选节点的点击 → 批量切换真实采集编号
-function applyToggleNode(targetType: SpecimenItem['type']) {
-  const groupItems = specimenList.value.filter(s => s.type === targetType)
-  const groupPaths = groupItems.map(s => [targetType, s.id] as (string | number)[])
+function applyToggleNode(toggleKey: string) {
+  const groupPaths = realPathsForKey(toggleKey)
   // 查看当前是否已全选
   const allSelected = groupPaths.every(p =>
-    selectForm.specimenValues.some(v => v[0] === p[0] && v[1] === p[1])
+    selectForm.specimenValues.some(v => pathsEqual(v, p))
   )
   // 先移除虚拟节点路径
   selectForm.specimenValues = selectForm.specimenValues.filter(
-    v => !(v.length === 2 && v[0] === targetType && isToggleValue(v[1]))
+    v => !isTogglePath(v, toggleKey)
   )
   if (allSelected) {
-    // 取消该分类全部真实子节点
+    // 取消该 toggleKey 下全部真实子节点
     selectForm.specimenValues = selectForm.specimenValues.filter(
-      v => !(v.length === 2 && v[0] === targetType && groupItems.some(s => s.id === v[1]))
+      v => !isRealPathOf(v, toggleKey)
     )
-    lastToggleAllSelected[targetType] = false
+    lastToggleAllSelected[toggleKey] = false
   } else {
-    // 追加该分类全部真实子节点（去重）
+    // 追加该 toggleKey 下全部真实子节点（去重）
     groupPaths.forEach(gp => {
-      if (!selectForm.specimenValues.some(v => v[0] === gp[0] && v[1] === gp[1])) {
+      if (!selectForm.specimenValues.some(v => pathsEqual(v, gp))) {
         selectForm.specimenValues.push(gp)
       }
     })
-    lastToggleAllSelected[targetType] = true
+    lastToggleAllSelected[toggleKey] = true
   }
 }
 
 // cascader change 处理：拦截虚拟全选节点
 function handleCascaderChange(val: (string | number)[][]) {
-  // 找出本次 change 中包含的虚拟节点（第一次点击全选会出现）
-  const toggleTargets: SpecimenItem['type'][] = []
+  // 找出本次 change 中包含的虚拟节点
+  const toggleTargets: string[] = []
   for (const v of val) {
-    if (v.length === 2 && v[0] && isToggleValue(v[1])) {
-      const t = typeFromToggle(v[1])
-      if (t && !toggleTargets.includes(t)) toggleTargets.push(t)
+    const last = v[v.length - 1]
+    if (isToggleValue(last)) {
+      const k = keyFromToggle(last)
+      if (k && !toggleTargets.includes(k)) toggleTargets.push(k)
     }
   }
   if (toggleTargets.length > 0) {
-    // 第一次点击：val 里有虚拟节点 → 按正常全选/取消处理
+    // 第一次点击：val 里有虚拟节点 → 先过滤掉，再按 toggleKey 处理
     selectForm.specimenValues = val.filter(
-      v => !(v.length === 2 && v[0] && isToggleValue(v[1]))
+      v => !isToggleValue(v[v.length - 1])
     )
-    toggleTargets.forEach(t => applyToggleNode(t))
+    toggleTargets.forEach(k => applyToggleNode(k))
   } else {
-    // 第二次点击（取消虚拟节点勾选）：val 里没有虚拟节点
-    // 遍历所有分类，如果某分类上次是全选态 && 当前 val 里仍是全选态
+    // 第二次点击（取消虚拟节点勾选）
+    // 遍历所有 toggleKey，如果某 toggleKey 上次是全选态 && 当前 val 里仍是全选态
     // 说明用户刚取消了虚拟节点，需要同步取消真实子节点
-    (Object.keys(lastToggleAllSelected) as SpecimenItem['type'][]).forEach(t => {
-      if (lastToggleAllSelected[t] && isGroupAllInValue(t, val)) {
-        applyToggleNode(t)
+    for (const k of ALL_TOGGLE_KEYS) {
+      if (lastToggleAllSelected[k] && isGroupAllInValue(k, val)) {
+        applyToggleNode(k)
       }
-    })
+    }
   }
 }
 
@@ -437,10 +487,13 @@ const specimenList = ref<SpecimenItem[]>([
   { id: 12, collectionNo: 'CGMCC 5.866', speciesName: 'Morchella esculenta', type: 'strain' },
   { id: 13, collectionNo: 'CGMCC 12.287', speciesName: 'Boletus edulis', type: 'strain' },
   { id: 14, collectionNo: 'CGMCC 13.200', speciesName: 'Cantharellus cibarius', type: 'strain' },
-  // 扩增子数据
-  { id: 15, collectionNo: 'AMPL-2024-001', speciesName: '土壤真菌群落', type: 'amplicon' },
-  { id: 16, collectionNo: 'AMPL-2024-002', speciesName: '叶面真菌群落', type: 'amplicon' },
-  { id: 17, collectionNo: 'AMPL-2024-003', speciesName: '肠道真菌群落', type: 'amplicon' }
+  // 扩增子数据（3 级：amplicon → subtype → specimen）
+  { id: 15, collectionNo: 'AMPL-2024-001', speciesName: '土壤真菌群落', type: 'amplicon', subtype: 'fungi' },
+  { id: 16, collectionNo: 'AMPL-2024-002', speciesName: '叶面真菌群落', type: 'amplicon', subtype: 'fungi' },
+  { id: 17, collectionNo: 'AMPL-2024-003', speciesName: '肠道真菌群落', type: 'amplicon', subtype: 'fungi' },
+  { id: 18, collectionNo: 'AMPL-2024-004', speciesName: '土壤细菌群落', type: 'amplicon', subtype: 'bacteria' },
+  { id: 19, collectionNo: 'AMPL-2024-005', speciesName: '肠道细菌群落', type: 'amplicon', subtype: 'bacteria' },
+  { id: 20, collectionNo: 'AMPL-2024-006', speciesName: '温泉古菌群落', type: 'amplicon', subtype: 'archaea' }
 ])
 
 // 级联选择器 options
@@ -451,25 +504,58 @@ const specimenCascaderOptions = computed<CascaderOption[]>(() => {
     strain: '菌种数据',
     amplicon: '扩增子数据'
   }
-  const grouped: Record<SpecimenItem['type'], CascaderOption[]> = {
-    fungi: [], lichen: [], strain: [], amplicon: []
+  const subtypeMeta: Record<string, string> = {
+    fungi: '真菌（Fungi）',
+    bacteria: '细菌（Bacteria）',
+    archaea: '古菌（Archaea）'
   }
-  specimenList.value.forEach(item => {
-    grouped[item.type].push({
-      value: item.id,
-      label: `${item.collectionNo}（${item.speciesName}）`
-    })
-  })
-  return (Object.keys(typeMeta) as SpecimenItem['type'][]).map(key => {
-    // 在真实采集编号前插入虚拟全选节点
-    const toggleNode: CascaderOption = {
-      value: toggleValue(key),
-      label: '全选该分类'
-    }
-    return {
-      value: key,
-      label: typeMeta[key],
-      children: [toggleNode, ...grouped[key]]
+  const typeOrder: SpecimenItem['type'][] = ['fungi', 'lichen', 'strain', 'amplicon']
+
+  return typeOrder.map(type => {
+    if (type === 'amplicon') {
+      // 3 级结构：amplicon → subtype → specimen
+      const subtypeOrder: ('fungi' | 'bacteria' | 'archaea')[] = ['fungi', 'bacteria', 'archaea']
+      const groupedBySub: Record<string, SpecimenItem[]> = { fungi: [], bacteria: [], archaea: [] }
+      specimenList.value.forEach(item => {
+        if (item.type === 'amplicon' && item.subtype) groupedBySub[item.subtype].push(item)
+      })
+      const subtypeChildren = subtypeOrder.map(st => {
+        const items = groupedBySub[st]
+        const realChildren = items.map(it => ({
+          value: it.id,
+          label: `${it.collectionNo}（${it.speciesName}）`
+        }))
+        const toggleNode: CascaderOption = {
+          value: toggleValue(`${type}__${st}`),
+          label: '全选该分类'
+        }
+        return {
+          value: st,
+          label: subtypeMeta[st],
+          children: [toggleNode, ...realChildren]
+        }
+      })
+      return {
+        value: type,
+        label: typeMeta[type],
+        children: subtypeChildren
+      }
+    } else {
+      // 2 级结构：type → specimen
+      const items = specimenList.value.filter(s => s.type === type)
+      const realChildren = items.map(it => ({
+        value: it.id,
+        label: `${it.collectionNo}（${it.speciesName}）`
+      }))
+      const toggleNode: CascaderOption = {
+        value: toggleValue(type),
+        label: '全选该分类'
+      }
+      return {
+        value: type,
+        label: typeMeta[type],
+        children: [toggleNode, ...realChildren]
+      }
     }
   })
 })
