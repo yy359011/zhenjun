@@ -1,0 +1,1 @@
+import{_ as c,o,c as a,a as s,b as t,k as r}from"./index-4Sp4Osf4.js";const n={},_={class:"placeholder-page"},d={class:"placeholder-card"};function l(p,i){const e=r("el-empty");return o(),a("div",_,[s("div",d,[t(e,{description:"该模块正在建设中"})])])}const f=c(n,[["render",l],["__scopeId","data-v-d7acb1f0"]]);export{f as default};

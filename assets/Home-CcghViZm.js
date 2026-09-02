@@ -1,0 +1,1 @@
+import{_ as s,o as a,c,a as e}from"./index-4Sp4Osf4.js";const t={},n={class:"home-page"};function r(l,o){return a(),c("div",n,[...o[0]||(o[0]=[e("div",{class:"welcome-card"},[e("h2",null,"欢迎使用真菌和地衣标本数据库后台管理系统"),e("p",null,"请从左侧菜单选择功能模块开始操作")],-1)])])}const d=s(t,[["render",r],["__scopeId","data-v-9a950ef4"]]);export{d as default};
